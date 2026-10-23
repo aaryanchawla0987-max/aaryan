@@ -6,25 +6,32 @@
 const STORE_KEY = 'krishi-sales-v1';
 const CATEGORIES = ['Seeds', 'Fertilizer', 'Pesticide', 'Weedicide', 'Fungicide', 'Other'];
 
-// Crop calendar for north/central India. Month index 0 = January.
+// Crop calendar for Narsinghpur (MP). Month index 0 = January.
+// Farmers here save their own wheat and gram seed, so the Rabi sell is seed
+// treatment, DAP, urea and weedicide; seed is mostly a Kharif (May–Jul) sale.
 const SEASONS = [
-  { months: [9, 10], title: 'Rabi sowing (Oct–Nov)', crops: ['Wheat', 'Mustard', 'Gram', 'Potato', 'Pea', 'Barley'],
-    needs: ['Seeds of wheat, mustard, gram', 'DAP / NPK at sowing', 'Seed-treatment fungicide', 'Termite control for wheat'],
-    sell: ['Seeds', 'Fertilizer', 'Fungicide'] },
-  { months: [11, 0], title: 'Rabi crop care (Dec–Jan)', crops: ['Wheat', 'Mustard', 'Gram', 'Potato'],
-    needs: ['Urea top-dressing for wheat', 'Weedicide for wheat (Phalaris / broadleaf)', 'Aphid control in mustard', 'Late blight in potato'],
+  { months: [9, 10], title: 'Rabi sowing (Oct–Nov)', crops: ['Gram', 'Wheat', 'Masoor', 'Pea', 'Sugarcane', 'Tur'],
+    needs: ['Seed treatment for saved gram & wheat seed (fungicide + Rhizobium)', 'DAP / NPK at sowing — book early, DAP runs short',
+            'Termite control in wheat', 'Autumn sugarcane planting: fertilizer + sett treatment', 'Pod borer spray in standing tur'],
+    sell: ['Fungicide', 'Fertilizer', 'Pesticide'] },
+  { months: [11, 0], title: 'Rabi crop care (Dec–Jan)', crops: ['Gram', 'Wheat', 'Masoor', 'Pea', 'Tur'],
+    needs: ['Urea top-dressing in wheat', 'Weedicide in wheat (25–35 days)', 'Pod borer (illi) in gram & tur',
+            'Powdery mildew in pea', 'Wilt watch in gram & masoor'],
     sell: ['Fertilizer', 'Weedicide', 'Pesticide', 'Fungicide'] },
-  { months: [1, 2], title: 'Rabi finish + Zaid sowing (Feb–Mar)', crops: ['Wheat', 'Gram', 'Moong', 'Vegetables', 'Watermelon'],
-    needs: ['Rust / fungicide spray in wheat', 'Pod borer in gram', 'Moong & vegetable seeds', 'Micronutrients'],
-    sell: ['Fungicide', 'Pesticide', 'Seeds'] },
-  { months: [3, 4], title: 'Harvest & summer (Apr–May)', crops: ['Moong', 'Vegetables', 'Sugarcane', 'Cotton'],
-    needs: ['Collect udhaar after harvest', 'Book Kharif seed orders early', 'Sucking pest control in vegetables'],
-    sell: ['Seeds', 'Pesticide'] },
-  { months: [5, 6], title: 'Kharif sowing (Jun–Jul)', crops: ['Paddy', 'Cotton', 'Soybean', 'Maize', 'Groundnut', 'Bajra'],
-    needs: ['Paddy, cotton, soybean, maize seeds', 'DAP / NPK at sowing', 'Pre-emergence weedicide', 'Seed treatment'],
+  { months: [1, 2], title: 'Rabi harvest + summer moong (Feb–Mar)', crops: ['Moong', 'Sugarcane', 'Wheat', 'Gram'],
+    needs: ['Summer moong seed after wheat/gram harvest', 'Spring sugarcane planting', 'Rust spray in late wheat', 'DAP for moong'],
+    sell: ['Seeds', 'Fertilizer', 'Fungicide'] },
+  { months: [3, 4], title: 'Summer moong care + Kharif booking (Apr–May)', crops: ['Moong', 'Sugarcane', 'Maize', 'Soybean'],
+    needs: ['Whitefly / thrips & yellow mosaic in moong', 'Early shoot borer in sugarcane',
+            'Take advance bookings for maize & soybean seed', 'Retailer orders for Kharif seed & fertilizer'],
+    sell: ['Pesticide', 'Seeds'] },
+  { months: [5, 6], title: 'Kharif sowing (Jun–Jul)', crops: ['Maize', 'Soybean', 'Paddy', 'Tur', 'Urad'],
+    needs: ['Maize hybrid seed (main seed season)', 'Soybean, paddy, tur, urad seed', 'DAP / NPK at sowing',
+            'Pre-emergence weedicide (maize: atrazine)', 'Seed treatment'],
     sell: ['Seeds', 'Fertilizer', 'Weedicide'] },
-  { months: [7, 8], title: 'Kharif crop care (Aug–Sep)', crops: ['Paddy', 'Cotton', 'Soybean', 'Maize'],
-    needs: ['Urea / zinc for paddy', 'Stem borer & BPH in paddy', 'Pink bollworm & whitefly in cotton', 'Fall armyworm in maize'],
+  { months: [7, 8], title: 'Kharif crop care (Aug–Sep)', crops: ['Maize', 'Soybean', 'Paddy', 'Tur', 'Sugarcane'],
+    needs: ['Urea top-dressing in maize & paddy', 'Fall armyworm in maize', 'Girdle beetle & semilooper in soybean',
+            'Stem borer in paddy', 'Top borer & pyrilla in sugarcane'],
     sell: ['Fertilizer', 'Pesticide', 'Fungicide'] },
 ];
 
@@ -45,7 +52,7 @@ const TEMPLATES = {
 
 // ---------- state ----------
 function emptyState() {
-  return { settings: { shop: 'My Krishi Kendra', phone: '', cc: '91', lang: 'hi' },
+  return { settings: { shop: 'Heera Krishak Bazar', phone: '', cc: '91', lang: 'hi', farmerCredit: 'no' },
            products: [], customers: [], sales: [], payments: [] };
 }
 let state = load();
@@ -55,7 +62,7 @@ let saleCust = '';
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return Object.assign(emptyState(), JSON.parse(raw));
+    if (raw) { const d = JSON.parse(raw); return Object.assign(emptyState(), d, { settings: Object.assign(emptyState().settings, d.settings) }); }
   } catch (e) { /* storage blocked: start empty */ }
   return emptyState();
 }
@@ -114,6 +121,8 @@ const views = {
     const monthSales = state.sales.filter(s => s.date.startsWith(month)).reduce((a, s) => a + s.total, 0);
     const dues = state.customers.map(c => ({ c, b: balanceOf(c.id) })).filter(x => x.b > 0.5);
     const totalDue = dues.reduce((a, x) => a + x.b, 0);
+    const monthBills = state.sales.filter(s => s.date.startsWith(month));
+    const named = monthBills.length ? Math.round(monthBills.filter(s => customer(s.customerId)?.phone).length / monthBills.length * 100) : 0;
     const lowStock = state.products.filter(p => Number(p.stock) <= Number(p.low || 0));
 
     // Product ranking for this month.
@@ -137,7 +146,7 @@ const views = {
         <div class="stat"><div class="label">Sales today</div><div class="value">${money(todaySales)}</div></div>
         <div class="stat"><div class="label">Sales this month</div><div class="value">${money(monthSales)}</div></div>
         <div class="stat warn"><div class="label">Udhaar to collect</div><div class="value">${money(totalDue)}</div></div>
-        <div class="stat"><div class="label">Customers</div><div class="value">${state.customers.length}</div></div>
+        <div class="stat ${named < 80 ? 'warn' : ''}"><div class="label">Bills with name + mobile (month)</div><div class="value">${monthBills.length ? named + '%' : '—'}</div></div>
       </div>
       ${season ? `<div class="card season"><b>🌱 Season now: ${esc(season.title)}</b>
         <div class="muted">Farmers need:</div><ul>${season.needs.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
@@ -173,9 +182,15 @@ const views = {
       <h2>New Bill</h2>
       <div class="card">
         <div class="grid2">
-          <label>Customer<select id="saleCustomer"><option value="">Walk-in (cash)</option>${custOpts}</select></label>
+          <label>Customer<select id="saleCustomer"><option value="">New / walk-in farmer</option>${custOpts}</select></label>
           <label>Date<input id="saleDate" type="date" value="${today()}"></label>
         </div>
+        ${!c ? `<div class="grid2" style="margin-top:10px">
+          <label>Farmer name<input id="wName" placeholder="Always ask — so we can call again"></label>
+          <label>Mobile<input id="wPhone" inputmode="tel"></label>
+          <label>Village<input id="wVillage"></label>
+          <label>Crops<input id="wCrops" placeholder="Gram, Wheat"></label>
+        </div>` : ''}
         <h3>Add item</h3>
         ${state.products.length ? `<div class="grid2">
           <label>Product<select id="saleProduct">${prodOpts}</select></label>
@@ -211,7 +226,7 @@ const views = {
           <label>Name<input name="name" required></label>
           <label>Phone (WhatsApp)<input name="phone" inputmode="tel"></label>
           <label>Village / Town<input name="village"></label>
-          <label>Type<select name="type"><option value="retail">Kisan (retail)</option><option value="wholesale">Dukandar / dealer (wholesale)</option></select></label>
+          <label>Type<select name="type"><option value="retail">Kisan (retail)</option><option value="wholesale">Retailer / FPO (wholesale)</option></select></label>
           <label>Crops (comma separated)<input name="crops" placeholder="Wheat, Mustard"></label>
           <label>Land (acres)<input name="acres" type="number" step="any"></label>
           <div style="align-self:end"><button class="btn primary">Save</button></div>
@@ -326,6 +341,7 @@ const views = {
         <label>Shop phone<input name="phone" value="${esc(s.phone)}"></label>
         <label>Country code for WhatsApp<input name="cc" value="${esc(s.cc)}"></label>
         <label>Message language<select name="lang"><option value="hi" ${s.lang === 'hi' ? 'selected' : ''}>हिन्दी</option><option value="en" ${s.lang === 'en' ? 'selected' : ''}>English</option></select></label>
+        <label>Udhaar for farmers<select name="farmerCredit"><option value="no" ${s.farmerCredit !== 'yes' ? 'selected' : ''}>No — retailers only</option><option value="yes" ${s.farmerCredit === 'yes' ? 'selected' : ''}>Yes</option></select></label>
         <div style="align-self:end"><button class="btn primary">Save</button></div>
       </form>
       <div class="card">
@@ -449,9 +465,25 @@ const actions = {
   saveSale() {
     if (!draftItems.length) return toast('Add at least one item');
     const total = draftItems.reduce((a, it) => a + it.qty * it.price, 0);
-    const cid = saleCust || null;
+    let cid = saleCust || null;
     const paid = Math.min(Math.max(parseFloat($('#salePaid').value) || 0, 0), total);
-    if (!cid && paid < total) return toast('Walk-in bills must be fully paid. Pick a customer for udhaar.');
+    if (!cid) {
+      // Turn a walk-in into a known customer whenever a name or mobile is given.
+      const name = $('#wName').value.trim(), phone = $('#wPhone').value.trim();
+      if (paid < total) return toast('A walk-in bill must be fully paid.');
+      if (name || phone) {
+        const digits = phone.replace(/\D/g, '').slice(-10);
+        const existing = digits && state.customers.find(c => c.phone.replace(/\D/g, '').slice(-10) === digits);
+        if (existing) cid = existing.id;
+        else {
+          cid = uid();
+          state.customers.push({ id: cid, name: name || 'Farmer ' + digits, phone, village: $('#wVillage').value.trim(), type: 'retail',
+            crops: splitList($('#wCrops').value).join(', '), acres: '', lastContact: null, created: today() });
+        }
+      }
+    } else if (paid < total && customer(cid).type === 'retail' && state.settings.farmerCredit !== 'yes') {
+      return toast('Farmer credit is off (Settings). Only retailers can take udhaar.');
+    }
     const sale = { id: uid(), date: $('#saleDate').value || today(), customerId: cid, items: draftItems, total, paid };
     state.sales.push(sale);
     for (const it of draftItems) { const p = product(it.productId); if (p) p.stock = +(p.stock - it.qty).toFixed(3); }
@@ -515,41 +547,45 @@ function download(name, text, type) {
 }
 
 function demoData() {
+  // Sample data only: names and phone numbers are made up. DAP/urea are at
+  // government MRP; other prices are examples — replace with your own.
   const d = emptyState();
-  d.settings.shop = 'Shri Krishna Krishi Kendra';
-  d.settings.phone = '98XXXXXX10';
+  d.settings.phone = '';
   const P = (name, category, brand, unit, retail, wholesale, cost, stock, low, crops) =>
     ({ id: uid(), name, category, brand, unit, retail, wholesale, cost, stock, low, crops });
   d.products = [
-    P('DAP 50kg', 'Fertilizer', 'IFFCO', 'bag', 1350, 1310, 1290, 40, 10, 'Wheat, Mustard, Paddy'),
-    P('Urea 45kg', 'Fertilizer', 'IFFCO', 'bag', 266, 262, 255, 120, 20, 'Wheat, Paddy, Maize'),
-    P('Wheat seed HD-2967 40kg', 'Seeds', 'NSC', 'bag', 1900, 1750, 1600, 25, 5, 'Wheat'),
-    P('Mustard seed Pusa Bold 1kg', 'Seeds', 'Pioneer', 'packet', 520, 470, 420, 4, 5, 'Mustard'),
-    P('Chlorpyrifos 20EC 1L', 'Pesticide', 'Dhanuka', 'bottle', 480, 430, 390, 18, 5, 'Wheat, Gram, Paddy'),
-    P('Sulfosulfuron 25g', 'Weedicide', 'UPL', 'packet', 210, 185, 160, 30, 8, 'Wheat'),
-    P('Carbendazim 50WP 500g', 'Fungicide', 'Bayer', 'packet', 340, 300, 270, 12, 4, 'Wheat, Gram, Potato'),
+    P('DAP 50kg', 'Fertilizer', 'Coromandel', 'bag', 1350, 1330, 1290, 60, 20, 'Gram, Wheat, Masoor, Maize'),
+    P('Urea 45kg', 'Fertilizer', 'NFL', 'bag', 266.5, 266.5, 255, 150, 30, 'Wheat, Maize, Paddy, Sugarcane'),
+    P('NPK 12:32:16 50kg', 'Fertilizer', 'Coromandel', 'bag', 1720, 1690, 1640, 25, 10, 'Gram, Wheat, Sugarcane'),
+    P('Dekalb 9126 maize 4kg', 'Seeds', 'Bayer', 'packet', 1850, 1800, 1700, 8, 10, 'Maize'),
+    P('Seed treatment fungicide 250g', 'Fungicide', 'Tata Rallis', 'packet', 290, 270, 245, 40, 10, 'Gram, Wheat, Masoor'),
+    P('Emamectin benzoate 5SG 250g', 'Pesticide', 'IIL', 'packet', 620, 590, 550, 22, 6, 'Gram, Tur, Maize'),
+    P('Wheat weedicide (Clodinafop+Metsulfuron)', 'Weedicide', 'Tata Rallis', 'acre pack', 480, 455, 420, 30, 8, 'Wheat'),
   ];
   const C = (name, phone, village, type, crops, acres) => ({ id: uid(), name, phone, village, type, crops, acres, lastContact: null, created: today() });
   d.customers = [
-    C('Ramesh Yadav', '9800000001', 'Rampur', 'retail', 'Wheat, Mustard', 6),
-    C('Suresh Patel', '9800000002', 'Sultanpur', 'retail', 'Wheat, Gram', 4),
-    C('Kisan Seva Store', '9800000003', 'Bhadohi', 'wholesale', 'Wheat, Paddy, Mustard', ''),
-    C('Mohan Singh', '9800000004', 'Rampur', 'retail', 'Paddy, Wheat', 10),
-    C('Gita Devi', '9800000005', 'Kalyanpur', 'retail', 'Mustard, Potato', 3),
+    C('Demo Kisan 1', '9800000001', 'Dhamna', 'retail', 'Gram, Wheat, Sugarcane', 40),
+    C('Demo Kisan 2', '9800000002', 'Sagoni', 'retail', 'Maize, Gram', 12),
+    C('Demo Krishi Kendra', '9800000003', 'Kareli', 'wholesale', 'Gram, Wheat, Maize', ''),
+    C('Demo Kisan 3', '9800000004', 'Murach', 'retail', 'Maize, Wheat', 4),
+    C('Demo FPO', '9800000005', 'Gotegaon', 'wholesale', 'Gram, Tur, Masoor', ''),
+    C('Demo Kisan 4', '9800000006', 'Nayagaon', 'retail', 'Wheat, Gram', 8),
   ];
   const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
   const S = (ci, n, items, paid) => {
-    const its = items.map(([pi, qty]) => { const p = d.products[pi]; const c = d.customers[ci];
-      return { productId: p.id, name: p.name, qty, price: c.type === 'wholesale' ? p.wholesale : p.retail }; });
+    const c = ci === null ? null : d.customers[ci];
+    const its = items.map(([pi, qty]) => { const p = d.products[pi];
+      return { productId: p.id, name: p.name, qty, price: c && c.type === 'wholesale' ? p.wholesale : p.retail }; });
     const total = its.reduce((a, i) => a + i.qty * i.price, 0);
-    d.sales.push({ id: uid(), date: daysAgo(n), customerId: d.customers[ci].id, items: its, total, paid: paid ?? total });
+    d.sales.push({ id: uid(), date: daysAgo(n), customerId: c ? c.id : null, items: its, total, paid: paid ?? total });
   };
-  S(0, 40, [[0, 2], [1, 3]], 1500);
-  S(1, 35, [[2, 1], [4, 1]]);
-  S(2, 20, [[0, 10], [1, 20]], 10000);
-  S(3, 3, [[1, 4], [5, 2]]);
-  S(4, 1, [[3, 2], [6, 1]], 0);
-  S(0, 0, [[6, 1]]);
+  S(1, 120, [[3, 3], [1, 4]]);
+  S(5, 40, [[0, 2], [6, 2]]);
+  S(2, 25, [[0, 20], [1, 40], [4, 10]], 20000);
+  S(4, 6, [[0, 15], [5, 5]], 10000);
+  S(0, 2, [[0, 8], [2, 4], [4, 6]]);
+  S(null, 1, [[1, 2]]);
+  S(3, 0, [[4, 1], [1, 2]]);
   return d;
 }
 
