@@ -2,13 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Krishi Sales</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>HKB Sales Desk</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hind:wght@400;600;700&family=Rozha+One&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
-    <div class="brand"><span class="logo">🌾</span> <span id="shopTitle">Krishi Sales</span></div>
+    <div class="brand" id="shopTitle">Heera Krishak Bazar</div>
     <nav id="tabs">
       <button data-tab="dashboard" class="active">Dashboard</button>
       <button data-tab="sale">New Bill</button>
@@ -21,6 +22,13 @@
   </header>
   <main id="view"></main>
   <div id="toast" hidden></div>
+  <div id="modal" hidden>
+    <div class="sheet" role="dialog" aria-modal="true">
+      <p id="mMsg"></p>
+      <input id="mInput" type="number" step="any" hidden>
+      <div class="row"><button class="btn" id="mNo">Cancel</button><button class="btn primary" id="mYes">Yes</button></div>
+    </div>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>

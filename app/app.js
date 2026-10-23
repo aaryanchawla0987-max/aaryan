@@ -67,8 +67,88 @@ function load() {
   return emptyState();
 }
 function save() {
+  if (db) return;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
   catch (e) { toast('Could not save — browser storage is blocked. Use Backup.'); }
+}
+
+// ---------- shared online store ----------
+// When the app runs as a published claude.ai page, data lives in one shared
+// store so every staff phone sees the same bills. Opened as a plain file, it
+// falls back to this browser's storage.
+let db = null;
+let loading = false;
+const live = {};
+const plain = o => JSON.parse(JSON.stringify(o));
+function writeErr(e) {
+  const code = e && e.code;
+  toast(code === 'quota_exceeded' ? 'Online storage is full. Download a backup and ask for an archive.'
+    : code === 'invalid_argument' ? 'You can view this shop but not change it. Ask the owner for edit access.'
+    : 'Could not save. Check the internet and try again.');
+}
+function put(coll, obj) { if (db) db.collection(coll).doc(obj.id).set(plain(obj)).catch(writeErr); else save(); }
+function remove(coll, id) { if (db) db.collection(coll).doc(id).delete().catch(writeErr); else save(); }
+function putSettings() { if (db) db.doc('meta/settings').set(plain(state.settings)).catch(writeErr); else save(); }
+
+async function connect() {
+  if (!window.claude || typeof window.claude.use !== 'function') return;
+  const d = await window.claude.use('db');
+  if (!d) return;
+  db = d; loading = true;
+  state = emptyState(); render();
+  const onErr = () => toast('Lost connection to shop data. Reload the page.');
+  const sub = (key, q) => q.onSnapshot(snap => { live[key] = snap.docs.map(x => ({ ...x.data() })); merge(); }, onErr);
+  sub('products', db.collection('products'));
+  sub('customers', db.collection('customers'));
+  sub('payments', db.collection('payments').orderBy('date', 'desc').limit(1000));
+  sub('recent', db.collection('sales').orderBy('date', 'desc').limit(1000));
+  sub('credit', db.collection('sales').where('credit', '==', true).limit(1000));
+  db.doc('meta/settings').onSnapshot(snap => {
+    state.settings = Object.assign(emptyState().settings, snap.exists ? snap.data() : {});
+    softRender();
+  }, onErr);
+}
+function merge() {
+  if (!['products', 'customers', 'payments', 'recent', 'credit'].every(k => live[k])) return;
+  loading = false;
+  const sales = new Map();
+  for (const x of [...live.credit, ...live.recent]) sales.set(x.id, x);
+  state.products = live.products.sort((a, b) => a.name.localeCompare(b.name));
+  state.customers = live.customers.sort((a, b) => a.name.localeCompare(b.name));
+  state.payments = live.payments;
+  state.sales = [...sales.values()].sort((a, b) => (a.date + a.id).localeCompare(b.date + b.id));
+  softRender();
+}
+// Re-render for someone else's change without wiping what this person is typing.
+function fieldKey(el) { const f = el.form && el.form.getAttribute('id'); return el.id || (f && el.name ? f + ':' + el.name : ''); }
+function fieldFor(k) {
+  if (!k.includes(':')) return document.getElementById(k);
+  const [f, n] = k.split(':');
+  return document.querySelector('#' + f + ' [name="' + n + '"]');
+}
+function softRender() {
+  const kept = [...document.querySelectorAll('#view input, #view select, #view textarea')]
+    .filter(el => el.type !== 'file').map(el => [fieldKey(el), el.value]).filter(([k]) => k);
+  const focus = document.activeElement ? fieldKey(document.activeElement) : '';
+  render();
+  for (const [k, v] of kept) { const el = fieldFor(k); if (el) el.value = v; }
+  if (focus) { const el = fieldFor(focus); if (el) el.focus(); }
+}
+
+// In-page confirm/prompt (pop-up dialogs are blocked on the published page).
+function ask(message, opts = {}) {
+  return new Promise(resolve => {
+    const m = $('#modal'), input = $('#mInput');
+    $('#mMsg').textContent = message;
+    $('#mYes').textContent = opts.ok || 'Yes';
+    input.hidden = !opts.input; input.value = opts.value || '';
+    m.hidden = false;
+    (opts.input ? input : $('#mYes')).focus();
+    const done = val => { m.hidden = true; $('#mYes').onclick = $('#mNo').onclick = input.onkeydown = null; resolve(val); };
+    $('#mYes').onclick = () => done(opts.input ? input.value : true);
+    $('#mNo').onclick = () => done(opts.input ? null : false);
+    input.onkeydown = e => { if (e.key === 'Enter') done(input.value); if (e.key === 'Escape') done(null); };
+  });
 }
 
 // ---------- helpers ----------
@@ -169,7 +249,10 @@ const views = {
           ${lowStock.length ? `<table>${lowStock.map(p => `<tr><td>${esc(p.name)}</td><td class="num"><span class="pill red">${esc(p.stock)} ${esc(p.unit)}</span></td></tr>`).join('')}</table>` : '<div class="empty">Stock is fine.</div>'}
         </div>
       </div>
-      ${!state.products.length ? `<div class="card">New here? <button class="btn" data-action="demo">Load demo data</button> to see how it works, or add your products and customers.</div>` : ''}
+      ${!state.products.length ? (db
+        ? `<div class="card"><b>Start here:</b> add the products you sell, with retail and wholesale prices. Then every bill, offer and stock alert works from them.
+            <div class="row" style="margin-top:8px"><button class="btn primary" data-go="products">Add products</button></div></div>`
+        : `<div class="card">New here? <button class="btn" data-action="demo">Load demo data</button> to see how it works, or add your products and customers.</div>`) : ''}
     `;
   },
 
@@ -218,18 +301,20 @@ const views = {
   customers() {
     const q = (views.customers.q || '').toLowerCase();
     const list = state.customers.filter(c => !q || [c.name, c.village, c.phone, c.crops].join(' ').toLowerCase().includes(q));
+    const e = customer(views.customers.editing) || {};
     return `
       <h2>Customers</h2>
       <div class="card">
-        <h3 style="margin-top:0">Add customer</h3>
+        <h3 style="margin-top:0">${e.id ? 'Edit ' + esc(e.name) : 'Add customer'}</h3>
         <form id="custForm" class="grid2">
-          <label>Name<input name="name" required></label>
-          <label>Phone (WhatsApp)<input name="phone" inputmode="tel"></label>
-          <label>Village / Town<input name="village"></label>
-          <label>Type<select name="type"><option value="retail">Kisan (retail)</option><option value="wholesale">Retailer / FPO (wholesale)</option></select></label>
-          <label>Crops (comma separated)<input name="crops" placeholder="Wheat, Mustard"></label>
-          <label>Land (acres)<input name="acres" type="number" step="any"></label>
-          <div style="align-self:end"><button class="btn primary">Save</button></div>
+          <input type="hidden" name="rid" value="${esc(e.id || '')}">
+          <label>Name<input name="name" required value="${esc(e.name || '')}"></label>
+          <label>Phone (WhatsApp)<input name="phone" inputmode="tel" value="${esc(e.phone || '')}"></label>
+          <label>Village / Town<input name="village" value="${esc(e.village || '')}"></label>
+          <label>Type<select name="type"><option value="retail">Kisan (retail)</option><option value="wholesale" ${e.type === 'wholesale' ? 'selected' : ''}>Retailer / FPO (wholesale)</option></select></label>
+          <label>Crops (comma separated)<input name="crops" placeholder="Gram, Wheat" value="${esc(e.crops || '')}"></label>
+          <label>Land (acres)<input name="acres" type="number" step="any" value="${esc(e.acres || '')}"></label>
+          <div class="row" style="align-self:end"><button class="btn primary">Save</button>${e.id ? '<button type="button" class="btn" data-action="cancelEdit">Cancel</button>' : ''}</div>
         </form>
       </div>
       <input id="custSearch" placeholder="Search name, village, crop…" value="${esc(views.customers.q || '')}">
@@ -240,28 +325,32 @@ const views = {
             <td><span class="pill ${c.type === 'wholesale' ? 'amber' : ''}">${c.type}</span></td>
             <td>${esc(c.crops)}</td><td class="num">${b > 0.5 ? `<span class="pill red">${money(b)}</span>` : '—'}</td>
             <td class="num">${lb ? daysSince(lb) + 'd ago' : '—'}</td>
-            <td class="num"><button class="btn small danger" data-action="delCust" data-id="${c.id}">Delete</button></td></tr>`; }).join('')}</table>`
+            <td class="num"><button class="btn small" data-action="editCust" data-id="${c.id}">Edit</button>
+              <button class="btn small danger" data-action="delCust" data-id="${c.id}">Delete</button></td></tr>`; }).join('')}</table>`
           : '<div class="empty">No customers yet.</div>'}
       </div>`;
   },
 
   products() {
+    const e = product(views.products.editing) || {};
+    const v = (k, d = '') => esc(e[k] ?? d);
     return `
       <h2>Products & Stock</h2>
       <div class="card">
-        <h3 style="margin-top:0">Add product</h3>
+        <h3 style="margin-top:0">${e.id ? 'Edit ' + esc(e.name) : 'Add product'}</h3>
         <form id="prodForm" class="grid2">
-          <label>Name<input name="name" required placeholder="DAP 50kg"></label>
-          <label>Category<select name="category">${CATEGORIES.map(c => `<option>${c}</option>`).join('')}</select></label>
-          <label>Company / Brand<input name="brand"></label>
-          <label>Unit<input name="unit" value="bag"></label>
-          <label>Retail price ₹<input name="retail" type="number" step="any" required></label>
-          <label>Wholesale price ₹<input name="wholesale" type="number" step="any" required></label>
-          <label>Buying cost ₹<input name="cost" type="number" step="any"></label>
-          <label>Stock<input name="stock" type="number" step="any" value="0"></label>
-          <label>Low-stock alert at<input name="low" type="number" step="any" value="5"></label>
-          <label>For crops (comma separated)<input name="crops" placeholder="Wheat, Paddy"></label>
-          <div style="align-self:end"><button class="btn primary">Save</button></div>
+          <input type="hidden" name="rid" value="${v('id')}">
+          <label>Name<input name="name" required placeholder="DAP 50kg" value="${v('name')}"></label>
+          <label>Category<select name="category">${CATEGORIES.map(c => `<option ${e.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+          <label>Company / Brand<input name="brand" value="${v('brand')}"></label>
+          <label>Unit<input name="unit" value="${v('unit', 'bag')}"></label>
+          <label>Retail price ₹<input name="retail" type="number" step="any" required value="${v('retail')}"></label>
+          <label>Wholesale price ₹<input name="wholesale" type="number" step="any" required value="${v('wholesale')}"></label>
+          <label>Buying cost ₹<input name="cost" type="number" step="any" value="${v('cost')}"></label>
+          <label>Stock<input name="stock" type="number" step="any" value="${v('stock', 0)}"></label>
+          <label>Low-stock alert at<input name="low" type="number" step="any" value="${v('low', 5)}"></label>
+          <label>For crops (comma separated)<input name="crops" placeholder="Gram, Wheat" value="${v('crops')}"></label>
+          <div class="row" style="align-self:end"><button class="btn primary">Save</button>${e.id ? '<button type="button" class="btn" data-action="cancelEdit">Cancel</button>' : ''}</div>
         </form>
       </div>
       <div class="card table-wrap">
@@ -271,6 +360,7 @@ const views = {
             <td class="num">${money(p.retail)}</td><td class="num">${money(p.wholesale)}</td><td class="num">${m === null ? '—' : m + '%'}</td>
             <td class="num"><span class="pill ${Number(p.stock) <= Number(p.low || 0) ? 'red' : ''}">${esc(p.stock)} ${esc(p.unit)}</span></td>
             <td class="num"><button class="btn small" data-action="addStock" data-id="${p.id}">+ Stock</button>
+              <button class="btn small" data-action="editProd" data-id="${p.id}">Edit</button>
               <button class="btn small danger" data-action="delProd" data-id="${p.id}">Delete</button></td></tr>`; }).join('')}</table>`
           : '<div class="empty">No products yet.</div>'}
       </div>`;
@@ -346,14 +436,15 @@ const views = {
       </form>
       <div class="card">
         <h3 style="margin-top:0">Backup</h3>
-        <p class="muted">Your data lives only in this browser. Download a backup every week and keep it safe (e.g. send it to yourself on WhatsApp or Google Drive).</p>
+        <p class="muted">${db ? 'Shop data is saved online and shared with everyone who has edit access to this page. Still download a backup every week.'
+          : 'Your data lives only in this browser. Download a backup every week and keep it safe (e.g. send it to yourself on WhatsApp or Google Drive).'}</p>
         <div class="row">
           <button class="btn primary" data-action="export">Download backup</button>
           <label class="btn" style="color:var(--ink)">Restore backup<input type="file" id="importFile" accept=".json" hidden></label>
           <button class="btn" data-action="exportCsv">Download customers (CSV)</button>
           <div class="spacer"></div>
-          <button class="btn" data-action="demo">Load demo data</button>
-          <button class="btn danger" data-action="wipe">Delete all data</button>
+          ${db ? '' : `<button class="btn" data-action="demo">Load demo data</button>
+          <button class="btn danger" data-action="wipe">Delete all data</button>`}
         </div>
       </div>`;
   },
@@ -383,10 +474,10 @@ function billText(s, c) {
 // ---------- rendering & events ----------
 let tab = 'dashboard';
 function render() {
-  $('#shopTitle').textContent = state.settings.shop || 'Krishi Sales';
+  $('#shopTitle').textContent = state.settings.shop || 'Heera Krishak Bazar';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  $('#view').innerHTML = views[tab]();
-  if (tab === 'sale') $('#saleCustomer').value = saleCust;
+  $('#view').innerHTML = loading ? '<div class="empty">Loading shop data…</div>' : views[tab]();
+  if (tab === 'sale' && !loading) $('#saleCustomer').value = saleCust;
 }
 function go(t) { tab = t; render(); window.scrollTo(0, 0); }
 
@@ -396,7 +487,7 @@ document.addEventListener('click', e => {
   const goto = e.target.closest('[data-go]');
   if (goto) return go(goto.dataset.go);
   const contact = e.target.closest('[data-contact]');
-  if (contact) { const c = customer(contact.dataset.contact); if (c) { c.lastContact = today(); save(); } }
+  if (contact) { const c = customer(contact.dataset.contact); if (c) { c.lastContact = today(); put('customers', c); } }
   const el = e.target.closest('[data-action]');
   if (!el) return;
   const a = el.dataset.action;
@@ -406,20 +497,30 @@ document.addEventListener('click', e => {
 document.addEventListener('submit', e => {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(e.target));
-  if (e.target.id === 'custForm') {
-    state.customers.push({ id: uid(), name: data.name.trim(), phone: data.phone.trim(), village: data.village.trim(),
-      type: data.type, crops: splitList(data.crops).join(', '), acres: data.acres, lastContact: null, created: today() });
+  const formId = e.target.getAttribute('id');
+  if (formId === 'custForm') {
+    const fields = { name: data.name.trim(), phone: data.phone.trim(), village: data.village.trim(),
+      type: data.type, crops: splitList(data.crops).join(', '), acres: data.acres };
+    let c = customer(data.rid);
+    if (c) Object.assign(c, fields);
+    else { c = { id: uid(), ...fields, lastContact: null, created: today() }; state.customers.push(c); }
+    put('customers', c); views.customers.editing = null;
     toast('Customer saved');
-  } else if (e.target.id === 'prodForm') {
-    state.products.push({ id: uid(), name: data.name.trim(), category: data.category, brand: data.brand.trim(), unit: data.unit.trim() || 'unit',
+  } else if (formId === 'prodForm') {
+    const fields = { name: data.name.trim(), category: data.category, brand: data.brand.trim(), unit: data.unit.trim() || 'unit',
       retail: +data.retail, wholesale: +data.wholesale, cost: data.cost ? +data.cost : null, stock: +data.stock || 0,
-      low: +data.low || 0, crops: splitList(data.crops).join(', ') });
+      low: +data.low || 0, crops: splitList(data.crops).join(', ') };
+    let p = product(data.rid);
+    if (p) Object.assign(p, fields);
+    else { p = { id: uid(), ...fields }; state.products.push(p); }
+    put('products', p); views.products.editing = null;
     toast('Product saved');
-  } else if (e.target.id === 'setForm') {
+  } else if (formId === 'setForm') {
     Object.assign(state.settings, data);
+    putSettings();
     toast('Settings saved');
   }
-  save(); render();
+  render();
 });
 
 document.addEventListener('input', e => {
@@ -445,8 +546,10 @@ document.addEventListener('change', e => {
   }
   if (id === 'importFile' && e.target.files[0]) {
     e.target.files[0].text().then(txt => {
-      try { const d = JSON.parse(txt); if (!Array.isArray(d.customers)) throw 0; state = Object.assign(emptyState(), d); save(); render(); toast('Backup restored'); }
-      catch { toast('That file is not a valid backup'); }
+      let d;
+      try { d = JSON.parse(txt); if (!Array.isArray(d.customers)) throw 0; }
+      catch { return toast('That file is not a valid backup'); }
+      restore(d);
     });
   }
 });
@@ -465,7 +568,7 @@ const actions = {
   saveSale() {
     if (!draftItems.length) return toast('Add at least one item');
     const total = draftItems.reduce((a, it) => a + it.qty * it.price, 0);
-    let cid = saleCust || null;
+    let cid = saleCust || null, newCustomer = null;
     const paid = Math.min(Math.max(parseFloat($('#salePaid').value) || 0, 0), total);
     if (!cid) {
       // Turn a walk-in into a known customer whenever a name or mobile is given.
@@ -477,49 +580,56 @@ const actions = {
         if (existing) cid = existing.id;
         else {
           cid = uid();
-          state.customers.push({ id: cid, name: name || 'Farmer ' + digits, phone, village: $('#wVillage').value.trim(), type: 'retail',
-            crops: splitList($('#wCrops').value).join(', '), acres: '', lastContact: null, created: today() });
+          newCustomer = { id: cid, name: name || 'Farmer ' + digits, phone, village: $('#wVillage').value.trim(), type: 'retail',
+            crops: splitList($('#wCrops').value).join(', '), acres: '', lastContact: null, created: today() };
+          state.customers.push(newCustomer);
         }
       }
     } else if (paid < total && customer(cid).type === 'retail' && state.settings.farmerCredit !== 'yes') {
       return toast('Farmer credit is off (Settings). Only retailers can take udhaar.');
     }
-    const sale = { id: uid(), date: $('#saleDate').value || today(), customerId: cid, items: draftItems, total, paid };
-    state.sales.push(sale);
-    for (const it of draftItems) { const p = product(it.productId); if (p) p.stock = +(p.stock - it.qty).toFixed(3); }
+    const sale = { id: uid(), date: $('#saleDate').value || today(), customerId: cid, items: draftItems, total, paid, credit: total - paid > 0.005 };
+    if (newCustomer) put('customers', newCustomer);
+    state.sales.push(sale); put('sales', sale);
+    for (const it of draftItems) { const p = product(it.productId); if (p) { p.stock = +(p.stock - it.qty).toFixed(3); put('products', p); } }
     draftItems = []; saleCust = '';
-    save(); render();
+    render();
     const c = customer(cid);
     toast('Bill saved' + (c && c.phone ? ' — tap "Send bill" to WhatsApp it' : ''));
   },
-  delSale(el) {
+  async delSale(el) {
     const s = state.sales.find(x => x.id === el.dataset.id);
-    if (!s || !confirm('Delete this bill? Stock will be added back.')) return;
-    for (const it of s.items) { const p = product(it.productId); if (p) p.stock = +(Number(p.stock) + it.qty).toFixed(3); }
-    state.sales = state.sales.filter(x => x !== s); save(); render();
+    if (!s || !await ask('Delete this bill? Stock will be added back.', { ok: 'Delete bill' })) return;
+    for (const it of s.items) { const p = product(it.productId); if (p) { p.stock = +(Number(p.stock) + it.qty).toFixed(3); put('products', p); } }
+    state.sales = state.sales.filter(x => x !== s); remove('sales', s.id); render();
   },
-  delCust(el) {
+  async delCust(el) {
     const c = customer(el.dataset.id);
     if (!c) return;
     if (balanceOf(c.id) > 0.5) return toast('This customer still has udhaar. Clear it first.');
-    if (!confirm('Delete ' + c.name + '?')) return;
-    state.customers = state.customers.filter(x => x !== c); save(); render();
+    if (!await ask('Delete ' + c.name + '?', { ok: 'Delete' })) return;
+    state.customers = state.customers.filter(x => x !== c); remove('customers', c.id); render();
   },
-  delProd(el) {
+  async delProd(el) {
     const p = product(el.dataset.id);
-    if (p && confirm('Delete ' + p.name + '?')) { state.products = state.products.filter(x => x !== p); save(); render(); }
+    if (!p || !await ask('Delete ' + p.name + '?', { ok: 'Delete' })) return;
+    state.products = state.products.filter(x => x !== p); remove('products', p.id); render();
   },
-  addStock(el) {
+  editProd(el) { views.products.editing = el.dataset.id; render(); $('#prodForm').scrollIntoView({ block: 'center' }); },
+  editCust(el) { views.customers.editing = el.dataset.id; render(); $('#custForm').scrollIntoView({ block: 'center' }); },
+  cancelEdit() { views.products.editing = views.customers.editing = null; render(); },
+  async addStock(el) {
     const p = product(el.dataset.id);
-    const n = parseFloat(prompt('How many ' + p.unit + ' of ' + p.name + ' arrived?', '10'));
-    if (n > 0) { p.stock = +(Number(p.stock) + n).toFixed(3); save(); render(); toast('Stock updated'); }
+    const n = parseFloat(await ask('How many ' + p.unit + ' of ' + p.name + ' arrived?', { input: true, value: '10', ok: 'Add stock' }));
+    if (n > 0) { p.stock = +(Number(p.stock) + n).toFixed(3); put('products', p); render(); toast('Stock updated'); }
   },
   pay(el) {
     const id = el.dataset.id;
     const amt = parseFloat($('#pay-' + id).value);
     if (!(amt > 0)) return toast('Enter the amount received');
-    state.payments.push({ id: uid(), customerId: id, amount: amt, date: today() });
-    save(); render(); toast('Payment of ' + money(amt) + ' recorded');
+    const pmt = { id: uid(), customerId: id, amount: amt, date: today() };
+    state.payments.push(pmt); put('payments', pmt);
+    render(); toast('Payment of ' + money(amt) + ' recorded');
   },
   resetMsg() { views.campaign.message = ''; render(); },
   export() {
@@ -530,16 +640,40 @@ const actions = {
       .concat(state.customers.map(c => [c.name, c.phone, c.village, c.type, c.crops, c.acres, Math.round(balanceOf(c.id)), lastBuy(c.id) || '']));
     download('customers-' + today() + '.csv', rows.map(r => r.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')).join('\n'), 'text/csv');
   },
-  wipe() {
-    if (confirm('Delete ALL data? Download a backup first!') && confirm('Are you sure? This cannot be undone.')) { state = emptyState(); save(); render(); }
+  async wipe() {
+    if (await ask('Delete ALL data in this browser? Download a backup first!', { ok: 'Delete everything' })) { state = emptyState(); save(); render(); }
   },
-  demo() {
-    if (state.products.length && !confirm('Replace current data with demo data?')) return;
+  async demo() {
+    if (state.products.length && !await ask('Replace the data in this browser with demo data?', { ok: 'Load demo' })) return;
     state = demoData(); save(); render(); toast('Demo data loaded');
   },
 };
 
-function download(name, text, type) {
+async function restore(d) {
+  if (!db) { state = Object.assign(emptyState(), d); save(); render(); return toast('Backup restored'); }
+  // Online: add the backup's records to the shared shop data, one at a time.
+  if (!await ask('Add everything in this backup to the shared shop data?', { ok: 'Add' })) return;
+  const colls = ['products', 'customers', 'sales', 'payments'];
+  const total = colls.reduce((a, k) => a + (d[k] || []).length, 0);
+  let n = 0;
+  try {
+    for (const k of colls) for (const o of d[k] || []) {
+      if (k === 'sales') o.credit = o.total - o.paid > 0.005;
+      await db.collection(k).doc(o.id).set(plain(o));
+      if (++n % 25 === 0) toast('Uploading… ' + n + ' of ' + total);
+    }
+    if (d.settings) await db.doc('meta/settings').set(plain(Object.assign(emptyState().settings, d.settings)));
+    toast('Backup added: ' + n + ' records');
+  } catch (e) { writeErr(e); }
+}
+
+async function download(name, text, type) {
+  const dl = window.claude && typeof window.claude.use === 'function' ? await window.claude.use('downloads') : null;
+  if (dl) {
+    try { await dl.save({ filename: name, data: text }); toast('File saved'); }
+    catch (e) { if (e.code !== 'declined') toast('Saving files is not available here.'); }
+    return;
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type }));
   a.download = name; a.click();
@@ -590,3 +724,4 @@ function demoData() {
 }
 
 render();
+connect();

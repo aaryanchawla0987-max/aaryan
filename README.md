@@ -18,15 +18,18 @@ It runs in any browser, on a phone or a computer. There's nothing to install and
 
 ## How to open it
 
-- **On a computer:** download this repo and double-click `app/index.html`.
-- **On a phone:** host the `app` folder for free (for example with GitHub Pages) and open the link.
-  Then use your browser's "Add to Home screen" option.
+- **Online (shared by the whole team):** the app is published as a private claude.ai page. Data entered there is
+  saved online, so every phone that opens it sees the same bills, customers and udhaar. Only people the owner
+  gives edit access (Share menu) can open the shop data.
+- **Offline on one computer:** double-click `app/index.html`. Data stays in that browser only.
 
-Click **Load demo data** to try it out, then delete it from Settings and enter your real products and customers.
+`app/artifact.html` is the same app as `app/index.html`, without the page header that claude.ai adds itself.
 
 ## Important
 
-- Your data is saved **only in that browser on that device**. Go to Settings and use **Download backup**
-  every week, and keep the file safe (for example on Google Drive or in WhatsApp to yourself).
+- Offline, data is saved **only in that browser on that device**. Online or offline, go to Settings and use
+  **Download backup** every week. A backup from the offline copy can be added to the online one with **Restore backup**.
+- This app does not replace Tally. Tally stays the official record; this app is for knowing customers, collecting
+  udhaar and selling more.
 - WhatsApp messages are opened for you to send yourself. Nothing is sent automatically, so your number
   stays safe from being blocked as spam. Only message customers who know your shop.
