@@ -2,3 +2,4 @@
 voicecall/config.ini
 voicecall/*.csv
 !voicecall/farmers.example.csv
+__pycache__/
