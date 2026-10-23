@@ -1,0 +1,4 @@
+# Exotel password and real farmer phone numbers never go into git
+voicecall/config.ini
+voicecall/*.csv
+!voicecall/farmers.example.csv

@@ -1,0 +1,6 @@
+name,phone,village,crops,consent
+Demo Kisan 1,9800000001,Dhamna,"Gram, Wheat, Sugarcane",yes
+Demo Kisan 2,9800000002,Sagoni,"Maize, Gram",yes
+Demo Kisan 3,9800000003,Murach,"Maize, Wheat",no
+Demo Kisan 4,9800000004,Nayagaon,"Wheat, Gram",yes
+Demo Kisan 5,12345,Dhamna,Gram,yes
